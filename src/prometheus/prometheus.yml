@@ -1,0 +1,299 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'alertmanager:9093'
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+  - job_name: 'node-exporter'
+    dns_sd_configs:
+      - names: ['tasks.node-exporter']
+        type: A
+        port: 9100
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets:
+          - '192.168.56.10:8080'
+          - '192.168.56.11:8080'
+          - '192.168.56.12:8080'
+  - job_name: 'booking-service'
+    dns_sd_configs:
+      - names: ['tasks.app_booking-service']
+        type: A
+        port: 8083
+    metrics_path: /actuator/prometheus
+  - job_name: 'report-service'
+    dns_sd_configs:
+      - names: ['tasks.app_report-service']
+        type: A
+        port: 8086
+    metrics_path: /actuator/prometheus
+  - job_name: 'gateway-service'
+    dns_sd_configs:
+      - names: ['tasks.app_gateway-service']
+        type: A
+        port: 8087
+    metrics_path: /actuator/prometheus
+  - job_name: 'session-service'
+    dns_sd_configs:
+      - names: ['tasks.app_session-service']
+        type: A
+        port: 8081
+    metrics_path: /actuator/prometheus
+  - job_name: 'hotel-service'
+    dns_sd_configs:
+      - names: ['tasks.app_hotel-service']
+        type: A
+        port: 8082
+    metrics_path: /actuator/prometheus
+  - job_name: 'payment-service'
+    dns_sd_configs:
+      - names: ['tasks.app_payment-service']
+        type: A
+        port: 8084
+    metrics_path: /actuator/prometheus
+  - job_name: 'loyalty-service'
+    dns_sd_configs:
+      - names: ['tasks.app_loyalty-service']
+        type: A
+        port: 8085
+    metrics_path: /actuator/prometheus
+  - job_name: 'blackbox'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['https://google.com']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Конфигурация Prometheus для мониторинга микросервисной системы
+
+## Построчный разбор с комментариями
+
+```yaml
+global:
+  # Глобальные параметры, применяемые ко всем job'ам по умолчанию
+  scrape_interval: 15s
+  # Интервал сбора метрик с таргетов — каждые 15 секунд Prometheus делает HTTP-запрос к /metrics
+  evaluation_interval: 15s
+  # Интервал вычисления правил алертинга и рекординга — каждые 15 секунд проверяются условия алертов
+
+rule_files:
+  # Список файлов с правилами алертов и рекординга
+  - "alert_rules.yml"
+  # Подключаем файл с критическими алертами (по памяти, CPU и др.)
+
+alerting:
+  # Секция конфигурации интеграции с Alertmanager
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'alertmanager:9093'
+            # Адрес Alertmanager. 'alertmanager' — DNS-имя сервиса в Docker Swarm, 9093 — стандартный порт
+
+scrape_configs:
+  # Список конфигураций сбора метрик (job'ов) — основная часть файла
+  
+  - job_name: 'prometheus'
+    # Job для самомониторинга — Prometheus собирает собственные метрики
+    static_configs:
+      - targets: ['localhost:9090']
+        # Статический таргет: сам Prometheus на стандартном порту 9090
+
+  - job_name: 'node-exporter'
+    # Сбор метрик с node-exporter — метрики ОС (CPU, RAM, диски, сеть)
+    dns_sd_configs:
+      # Используем DNS Service Discovery — динамическое обнаружение через DNS
+      - names: ['tasks.node-exporter']
+        # Специальное Swarm-имя tasks.<service>: возвращает IP всех реплик сервиса node-exporter
+        type: A
+        # Тип DNS-запроса A (IPv4-адреса)
+        port: 9100
+        # Стандартный порт node-exporter
+
+  - job_name: 'cadvisor'
+    # Сбор метрик контейнеров через cAdvisor
+    static_configs:
+      - targets:
+          - '192.168.56.10:8080'
+          # manager01 — IP-адрес и порт cAdvisor
+          - '192.168.56.11:8080'
+          # worker01
+          - '192.168.56.12:8080'
+          # worker02
+          # Здесь жёстко прописаны IP, потому что cAdvisor запущен в global-режиме по одному на каждом узле
+
+  - job_name: 'booking-service'
+    # Job для микросервиса бронирования
+    dns_sd_configs:
+      - names: ['tasks.app_booking-service']
+        # Имя tasks.<stack>_<service> — формат для сервисов внутри Swarm-стека "app"
+        type: A
+        port: 8083
+        # Внутренний порт Spring Boot приложения
+    metrics_path: /actuator/prometheus
+    # Spring Boot Actuator отдаёт метрики Prometheus по этому пути (а не по /metrics)
+
+  - job_name: 'report-service'
+    # Аналогично, для сервиса отчётов
+    dns_sd_configs:
+      - names: ['tasks.app_report-service']
+        type: A
+        port: 8086
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'gateway-service'
+    # API Gateway — точка входа в систему
+    dns_sd_configs:
+      - names: ['tasks.app_gateway-service']
+        type: A
+        port: 8087
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'session-service'
+    # Сервис сессий/авторизации
+    dns_sd_configs:
+      - names: ['tasks.app_session-service']
+        type: A
+        port: 8081
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'hotel-service'
+    # Сервис управления отелями
+    dns_sd_configs:
+      - names: ['tasks.app_hotel-service']
+        type: A
+        port: 8082
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'payment-service'
+    # Сервис платежей
+    dns_sd_configs:
+      - names: ['tasks.app_payment-service']
+        type: A
+        port: 8084
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'loyalty-service'
+    # Сервис программы лояльности
+    dns_sd_configs:
+      - names: ['tasks.app_loyalty-service']
+        type: A
+        port: 8085
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'blackbox'
+    # Job для blackbox-мониторинга — проверка доступности извне (как пользователь)
+    metrics_path: /probe
+    # Endpoint blackbox-exporter, который выполняет проверку
+    params:
+      module: [http_2xx]
+      # Модуль blackbox-exporter: проверяет, что HTTP-запрос вернул код 2xx
+    static_configs:
+      - targets: ['https://google.com']
+        # Целевой URL для проверки (можно заменить на собственный сервис)
+    relabel_configs:
+      # Магия relabeling — переписывание меток, обязательная для blackbox
+      - source_labels: [__address__]
+        target_label: __param_target
+        # Берём адрес из таргета и кладём в параметр target для blackbox-exporter
+      - source_labels: [__param_target]
+        target_label: instance
+        # Дублируем target в метку instance для удобства отображения в графиках
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+        # Подменяем реальный адрес запроса: Prometheus идёт не на google.com, а на blackbox-exporter,
+        # который сам делает запрос к google.com и возвращает результат
+```
+
+---
+
+## Краткий монолог для защиты
+
+Этот файл — главный конфигурационный файл Prometheus, определяющий, что и как мониторить в нашей микросервисной системе на Docker Swarm. Он состоит из четырёх ключевых секций: глобальные настройки с интервалом сбора метрик 15 секунд, подключение файла правил алертов, интеграция с Alertmanager и основная часть — `scrape_configs` с описанием всех источников метрик. Особенность конфигурации — активное использование DNS Service Discovery через специальный механизм Docker Swarm `tasks.<service_name>`, который автоматически возвращает IP-адреса всех реплик сервиса. Это делает мониторинг динамическим: при масштабировании сервиса новые реплики автоматически попадают в систему мониторинга без правки конфига. Для системных метрик используется node-exporter (метрики хоста) и cAdvisor (метрики контейнеров). Все Java-микросервисы отдают метрики через Spring Boot Actuator по пути `/actuator/prometheus`. Отдельно настроен blackbox-мониторинг для проверки доступности сервисов снаружи через `relabel_configs`, который реализует характерный паттерн: Prometheus обращается к blackbox-exporter, а тот уже делает реальную проверку целевого URL.
+
+---
+
+## Возможные вопросы на защите и ответы
+
+**1. Что такое `scrape_interval` и `evaluation_interval`?**
+`scrape_interval` — частота сбора метрик с таргетов. `evaluation_interval` — частота проверки правил алертов. Обычно их делают одинаковыми.
+
+**2. Что такое DNS Service Discovery?**
+Это механизм, при котором Prometheus периодически делает DNS-запрос и автоматически обновляет список таргетов. В Docker Swarm специальное имя `tasks.<service>` возвращает IP всех контейнеров сервиса.
+
+**3. Зачем нужен `tasks.` префикс?**
+Без `tasks.` Swarm возвращает VIP (виртуальный IP) сервиса с балансировкой нагрузки — мы бы видели только один таргет. С `tasks.` возвращаются все реплики, и каждая мониторится отдельно.
+
+**4. Почему cAdvisor через static_configs, а не DNS?**
+cAdvisor запускается в режиме `global` (по одному на каждый узел) и слушает порт хоста напрямую. Удобнее обращаться к нему по IP узла, а не через сервисное имя Swarm.
+
+**5. Что такое `/actuator/prometheus`?**
+Это endpoint Spring Boot Actuator, который экспортирует метрики приложения в формате Prometheus (JVM, HTTP-запросы, бизнес-метрики).
+
+**6. Зачем нужен blackbox-exporter?**
+Он реализует мониторинг "снаружи" (black-box approach) — проверяет доступность через HTTP, ICMP, TCP, DNS. Полезно для SLA-мониторинга: видит ли пользователь сервис.
+
+**7. Объясни блок relabel_configs для blackbox.**
+Это стандартный трюк: Prometheus должен обратиться к blackbox-exporter с параметром `target=<url>`, а в метке `instance` хочется видеть оригинальный URL. Relabeling переписывает адрес запроса, сохраняя при этом исходный таргет в метке.
+
+**8. Что такое relabeling вообще?**
+Это механизм переписывания меток до и после сбора метрик. Позволяет фильтровать таргеты, добавлять/удалять метки, менять путь запроса. Очень мощный инструмент Prometheus.
+
+**9. Чем отличается white-box и black-box мониторинг?**
+White-box — мониторинг изнутри приложения (метрики JVM, бизнес-логики через Actuator). Black-box — извне, как пользователь (доступность endpoint'а, время ответа).
+
+**10. Что произойдёт при добавлении новой реплики сервиса?**
+DNS Service Discovery автоматически обнаружит её при следующем DNS-запросе (по умолчанию каждые 30 секунд), и она попадёт в мониторинг без перезапуска Prometheus.
+
+**11. Куда Prometheus хранит метрики?**
+В свою локальную TSDB (Time Series Database). По умолчанию данные хранятся 15 дней (можно настроить через флаг `--storage.tsdb.retention.time`).
+
+**12. Как Prometheus получает метрики — pull или push?**
+Pull-модель: Prometheus сам ходит по таргетам и забирает метрики. Push-модель доступна только через Pushgateway для коротких задач.
+
+**13. Зачем нужен Alertmanager отдельно от Prometheus?**
+Разделение ответственности: Prometheus только генерирует алерты, Alertmanager группирует, дедуплицирует, маршрутизирует и подавляет (silencing) уведомления.
+
+**14. Что такое job_name?**
+Это логическое имя группы таргетов. Добавляется в метку `job` ко всем собираемым метрикам, позволяет фильтровать их в PromQL (например, `up{job="booking-service"}`).
+
+**15. Почему все сервисы на разных портах?**
+Каждый Spring Boot микросервис запущен на своём порту, чтобы избежать конфликта при запуске на одном хосте. В Swarm это менее критично из-за изоляции, но соглашение сохранено.
+
+**16. Что такое метрика `up`?**
+Автоматическая метрика, которую Prometheus создаёт для каждого таргета: 1 — таргет доступен и метрики собраны успешно, 0 — недоступен. По ней делают алерты "сервис лежит".
+
+**17. Что будет, если DNS-имя не резолвится?**
+Job будет пустым (нет таргетов), но Prometheus не упадёт. В UI Status → Targets можно увидеть ошибку обнаружения.
+
+**18. Можно ли использовать Consul/Kubernetes для discovery?**
+Да, Prometheus поддерживает множество механизмов SD: `kubernetes_sd_configs`, `consul_sd_configs`, `ec2_sd_configs` и др. Для Swarm используется `dns_sd_configs`, так как нативного Swarm SD нет.

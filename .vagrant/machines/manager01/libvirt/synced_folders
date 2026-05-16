@@ -1,0 +1,1 @@
+{"rsync":{"/home/vagrant/project":{"type":"rsync","rsync__exclude":[".vagrant/",".git/","*.box"],"guestpath":"/home/vagrant/project","hostpath":"/home/s/prometheus-loki-grafana-swarm","disabled":false,"__vagrantfile":true,"exclude":[".vagrant/",".git/","*.box"],"owner":"vagrant","group":"vagrant"}}}

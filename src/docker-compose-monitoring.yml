@@ -1,0 +1,467 @@
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    ports:
+      - "9090:9090"
+    configs:
+      - source: prom_c7
+        target: /etc/prometheus/prometheus.yml
+      - source: prom_rules_c1
+        target: /etc/prometheus/alert_rules.yml
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - monitoring-net
+      - app_app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.24.0
+    networks:
+      - monitoring-net
+      - app_app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    ports:
+      - "9093:9093"
+    configs:
+      - source: alertmanager_c1
+        target: /etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - alertmanager_data:/alertmanager
+    networks:
+      - monitoring-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  loki:
+    image: grafana/loki:2.8.0
+    ports:
+      - "3100:3100"
+    configs:
+      - source: loki_c5
+        target: /etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    networks:
+      - monitoring-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  promtail:
+    image: grafana/promtail:2.8.0
+    configs:
+      - source: promtail_c4
+        target: /etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/var/log:ro
+    networks:
+      - monitoring-net
+    deploy:
+      mode: global
+
+  grafana:
+    image: grafana/grafana:10.1.5
+    ports:
+      - "3000:3000"
+    configs:
+      - source: grafana_c4
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    networks:
+      - monitoring-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - monitoring-net
+    deploy:
+      mode: global
+
+configs:
+  prom_c7:
+    file: ./prometheus/prometheus.yml
+  prom_rules_c1:
+    file: ./prometheus/alert_rules.yml
+  loki_c5:
+    file: ./loki/loki-config.yml
+  promtail_c4:
+    file: ./promtail/promtail-config.yml
+  grafana_c4:
+    file: ./grafana/provisioning/datasources/datasources.yml
+  alertmanager_c1:
+    file: ./alertmanager/alertmanager.yml
+
+networks:
+  monitoring-net:
+    driver: overlay
+    attachable: true
+  app_app-net:
+    external: true
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  alertmanager_data:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  # Docker Stack для мониторинга и логирования (Observability Stack)
+
+## Построчный разбор с комментариями
+
+```yaml
+version: '3.8'
+# Версия compose-формата с поддержкой Swarm-фич (configs, deploy, mode: global)
+
+services:
+  
+  prometheus:
+    # Центральная система сбора и хранения метрик
+    image: prom/prometheus:v2.47.0
+    # Фиксированная версия — для воспроизводимости развёртывания (не latest!)
+    ports:
+      - "9090:9090"
+      # Публикуем веб-UI Prometheus для прямого доступа
+    configs:
+      - source: prom_c7
+        target: /etc/prometheus/prometheus.yml
+        # Основной конфиг — описание scrape job'ов
+      - source: prom_rules_c1
+        target: /etc/prometheus/alert_rules.yml
+        # Правила алертов, подключаемые через rule_files в основном конфиге
+    volumes:
+      - prometheus_data:/prometheus
+      # Persistence для TSDB — без этого метрики теряются при рестарте
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      # Указываем путь к конфигу
+      - '--storage.tsdb.path=/prometheus'
+      # Путь к хранилищу временных рядов (совпадает с примонтированным volume)
+    networks:
+      - monitoring-net
+      # Сеть мониторинга — для связи с другими компонентами observability
+      - app_app-net
+      # Внешняя сеть приложения — чтобы доступаться до микросервисов для scrape
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          # На manager — там volume с историческими метриками
+
+  blackbox-exporter:
+    # Экспортер для проверки доступности endpoint'ов извне (HTTP/TCP/ICMP probes)
+    image: prom/blackbox-exporter:v0.24.0
+    networks:
+      - monitoring-net
+      # Связь с Prometheus, который дёргает blackbox для проверок
+      - app_app-net
+      # Доступ к проверяемым сервисам приложения
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  alertmanager:
+    # Сервис обработки и маршрутизации алертов от Prometheus
+    image: prom/alertmanager:v0.27.0
+    ports:
+      - "9093:9093"
+      # Веб-UI Alertmanager для просмотра активных алертов и silences
+    configs:
+      - source: alertmanager_c1
+        target: /etc/alertmanager/alertmanager.yml
+        # Конфигурация маршрутизации алертов (Slack, email и т.д.)
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      # Где хранить состояние (silences, notification logs)
+    volumes:
+      - alertmanager_data:/alertmanager
+      # Persistence для silences и истории уведомлений
+    networks:
+      - monitoring-net
+      # Только в сети мониторинга — приложениям с ним общаться не нужно
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  loki:
+    # Централизованное хранилище логов от Grafana Labs
+    image: grafana/loki:2.8.0
+    ports:
+      - "3100:3100"
+      # API для push логов от Promtail и запросов от Grafana
+    configs:
+      - source: loki_c5
+        target: /etc/loki/local-config.yaml
+        # Конфиг Loki (схема индексирования, хранилище)
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+      # Persistence для индексов и чанков логов
+    networks:
+      - monitoring-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  promtail:
+    # Агент сбора логов с контейнеров — аналог filebeat для Loki
+    image: grafana/promtail:2.8.0
+    configs:
+      - source: promtail_c4
+        target: /etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Сокет Docker для Service Discovery контейнеров (readonly)
+      - /var/log:/var/log:ro
+      # Системные логи хоста — для сбора логов самой ОС
+    networks:
+      - monitoring-net
+    deploy:
+      mode: global
+      # КЛЮЧЕВОЕ: запускается на КАЖДОМ узле кластера (а не replicas: N)
+      # Иначе нельзя собрать логи контейнеров с других узлов
+
+  grafana:
+    # Дашборды и визуализация для метрик (Prometheus) и логов (Loki)
+    image: grafana/grafana:10.1.5
+    ports:
+      - "3000:3000"
+      # Веб-UI Grafana
+    configs:
+      - source: grafana_c4
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+        # Автопровижининг datasources — Prometheus и Loki подключаются автоматически
+    volumes:
+      - grafana_data:/var/lib/grafana
+      # Persistence для дашбордов, пользователей, настроек
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Дефолтные креды (в production обязательно менять!)
+    networks:
+      - monitoring-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  node-exporter:
+    # Экспортер метрик ОС (CPU, RAM, диски, сеть) с каждого узла
+    image: prom/node-exporter:v1.6.1
+    volumes:
+      - /proc:/host/proc:ro
+      # Процессы и системная информация хоста
+      - /sys:/host/sys:ro
+      # Информация о ядре (sysfs)
+      - /:/rootfs:ro
+      # Корневая ФС хоста для информации о дисках
+    command:
+      - '--path.procfs=/host/proc'
+      # Говорим экспортеру читать из примонтированного хостового /proc
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      # Исключаем виртуальные ФС из мониторинга (двойной $$ для экранирования в compose)
+    networks:
+      - monitoring-net
+    deploy:
+      mode: global
+      # На каждом узле — нужно мониторить каждый хост отдельно
+
+configs:
+  # Декларация всех конфигурационных файлов, которые Swarm распространит по узлам
+  prom_c7:
+    file: ./prometheus/prometheus.yml
+    # Суффикс _c7 — версия конфига (configs неизменяемы, обновление через новое имя)
+  prom_rules_c1:
+    file: ./prometheus/alert_rules.yml
+  loki_c5:
+    file: ./loki/loki-config.yml
+  promtail_c4:
+    file: ./promtail/promtail-config.yml
+  grafana_c4:
+    file: ./grafana/provisioning/datasources/datasources.yml
+  alertmanager_c1:
+    file: ./alertmanager/alertmanager.yml
+
+networks:
+  monitoring-net:
+    driver: overlay
+    # Изолированная overlay-сеть для observability-компонентов
+    attachable: true
+    # Можно подключать сторонние контейнеры для отладки
+  app_app-net:
+    external: true
+    # Внешняя сеть — создана другим стеком (app), мы только присоединяемся
+    # Имя сформировано как <stack>_<network>, отсюда префикс app_
+
+volumes:
+  prometheus_data:
+  # Именованные тома для persistence — Docker управляет ими сам
+  loki_data:
+  grafana_data:
+  alertmanager_data:
+```
+
+---
+
+## Краткий монолог для защиты
+
+Этот файл — стек системы наблюдаемости (observability), реализующий "три кита мониторинга": метрики, логи и алерты. Стек состоит из семи компонентов, образующих полный конвейер: Prometheus собирает метрики с микросервисов и экспортеров, Alertmanager обрабатывает срабатывающие алерты, Loki хранит логи, Promtail собирает логи с контейнеров на каждом узле, node-exporter и blackbox-exporter дают системные метрики и проверки доступности, а Grafana визуализирует всё это в дашбордах. Ключевая архитектурная особенность — использование `deploy.mode: global` для promtail и node-exporter: эти агенты обязательно должны работать на каждом узле кластера, чтобы собрать локальные метрики и логи, недоступные удалённо. Stateful компоненты (Prometheus, Loki, Grafana, Alertmanager) привязаны к manager-узлу через `placement constraints`, потому что используют локальные volume'ы для хранения исторических данных. Стек живёт в собственной overlay-сети `monitoring-net`, но Prometheus и blackbox-exporter дополнительно подключены к внешней сети `app_app-net` основного приложения через `external: true` — это позволяет им scrapить метрики микросервисов по DNS-именам сервисов. Все конфигурационные файлы распространяются через нативный механизм Swarm `configs` с версионированием в имени (суффиксы _c1, _c5, _c7), что обеспечивает контролируемое обновление конфигурации без пересборки образов.
+
+---
+
+## Возможные вопросы на защите и ответы
+
+**1. Что такое observability stack и зачем он нужен?**
+Это набор инструментов для наблюдения за системой. Три основных столпа: метрики (числовые показатели во времени), логи (записи событий), трейсы (путь запроса через сервисы). Нужен для диагностики, alerting'а, capacity planning.
+
+**2. Почему promtail и node-exporter в режиме `global`?**
+Они должны работать на каждом узле, так как собирают локальные данные: node-exporter читает /proc/, /sys/ хоста, promtail — логи локальных контейнеров через локальный docker.sock. С другого узла эти данные недоступны.
+
+**3. Чем `global` отличается от `replicas: N`?**
+`global` — гарантированно по одному экземпляру на каждом узле кластера. `replicas: N` — N экземпляров, размещённых Swarm'ом по своему усмотрению (могут оказаться на одном узле).
+
+**4. Что значит `external: true` для сети?**
+Сеть не создаётся этим стеком — она уже существует (создана другим стеком). Мы только присоединяемся к ней. Имя `app_app-net` — это сеть `app-net` из стека `app` (Swarm префиксует имя стека).
+
+**5. Зачем Prometheus в двух сетях?**
+В `monitoring-net` — для связи с Alertmanager и Grafana. В `app_app-net` — чтобы доставать метрики микросервисов по их DNS-именам (`tasks.app_booking-service`). Без второй сети scrape не работает.
+
+**6. Зачем монтируется `/var/run/docker.sock` в promtail?**
+Для Docker Service Discovery — promtail через сокет получает список локальных контейнеров и читает их логи. Без сокета он не знает, какие контейнеры существуют.
+
+**7. Зачем `:ro` для volume?**
+Read-only монтирование — promtail и node-exporter только читают данные хоста, не должны их менять. Защита от случайной модификации и компрометации.
+
+**8. Что делает `$$` в команде node-exporter?**
+В compose-файлах `$` — спецсимвол для подстановки переменных. Чтобы передать литеральный `$`, его удваивают: `$$`. В контейнере это превращается обратно в `$` для regex.
+
+**9. Зачем версионирование в именах configs (c1, c5, c7)?**
+Swarm configs неизменяемы — нельзя обновить существующий конфиг. Чтобы изменить, нужно создать новый с другим именем. Версионирование позволяет отслеживать историю изменений и делать rollback.
+
+**10. Что произойдёт без `volumes` у Prometheus?**
+Метрики будут храниться в писчем слое контейнера. При перезапуске или передеплое все исторические данные потеряются — а они в Prometheus самое ценное.
+
+**11. Где находятся данные volume'ов?**
+В `/var/lib/docker/volumes/<volume_name>/_data` на том узле, где запущен контейнер. Привязка к manager-узлу через constraints гарантирует, что volume всегда там же.
+
+**12. Что делает blackbox-exporter?**
+Выполняет активные проверки доступности endpoint'ов: HTTP, HTTPS, TCP, ICMP, DNS. Prometheus дёргает его API, blackbox делает проверку и возвращает метрики (доступность, время ответа, валидность SSL).
+
+**13. Чем blackbox отличается от node-exporter?**
+node-exporter — пассивный сбор метрик ОС. blackbox-exporter — активные проверки сетевых сервисов (как пользователь). Это white-box vs black-box подход.
+
+**14. Что такое provisioning в Grafana?**
+Декларативная настройка через файлы: datasources, dashboards, alerting. При старте Grafana автоматически применяет конфиги из `/etc/grafana/provisioning/`. Не нужно настраивать вручную через UI.
+
+**15. Зачем Alertmanager отдельно от Prometheus?**
+Разделение ответственности: Prometheus генерирует алерты по правилам, Alertmanager их обрабатывает (группирует, дедуплицирует, маршрутизирует, подавляет). Можно подключить несколько Prometheus к одному Alertmanager.
+
+**16. Можно ли заменить Loki на ELK?**
+Можно, но Loki значительно дешевле по ресурсам — он не индексирует содержимое логов, только метки. ELK мощнее в полнотекстовом поиске, но требует больше CPU/RAM/диска.
+
+**17. Что произойдёт при падении manager-узла?**
+Большая часть мониторинга упадёт — Prometheus, Loki, Grafana, Alertmanager все на manager. Останутся только агенты (promtail, node-exporter), но данные им некуда отправлять. Это слабое место — в production нужно несколько managers.
+
+**18. Почему такие специфичные пути в node-exporter?**
+Контейнер изолирован от хоста, но node-exporter должен читать данные хостовой ОС. Мы монтируем /proc, /sys, / хоста в /host/proc, /host/sys, /rootfs контейнера и через флаги говорим экспортеру читать оттуда.
+
+**19. Зачем порты пробрасываются наружу?**
+Для прямого доступа к UI: Grafana (3000), Prometheus (9090), Alertmanager (9093), Loki API (3100). Через Swarm Routing Mesh они доступны на любом узле кластера.
+
+**20. Как датасорсы Grafana знают о Prometheus/Loki?**
+Через файл provisioning'а — в нём указаны URL: `http://prometheus:9090` и `http://loki:3100`. DNS Swarm резолвит эти имена в VIP соответствующих сервисов.
+
+**21. Что такое scrape в контексте Prometheus?**
+Это HTTP-запрос Prometheus к endpoint'у `/metrics` целевого сервиса для получения текущих значений метрик. Происходит периодически (scrape_interval).
+
+**22. Какой объём данных может хранить Loki/Prometheus?**
+Зависит от настроек retention. По умолчанию Prometheus хранит 15 дней. Loki — обычно тоже несколько недель. Для долгосрочного хранения используют remote storage (Thanos, Mimir, S3 для Loki).
+
+**23. Чем мониторинг через `mode: global` лучше, чем через DaemonSet (если сравнивать с Kubernetes)?**
+Концептуально это одно и то же — гарантия запуска по одному поду на каждой ноде. Swarm-аналог называется `global mode`, в K8s — `DaemonSet`.

@@ -1,0 +1,588 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: do-h-09-postgres:v1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    networks:
+      - app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  session-service:
+    image: do-h-09-session-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: users_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  payment-service:
+    image: do-h-09-payment-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: payments_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  loyalty-service:
+    image: do-h-09-loyalty-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: balances_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  booking-service:
+    image: do-h-09-booking-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: reservations_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+      RABBIT_MQ_HOST: rabbitmq
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: report_queue
+      RABBIT_MQ_EXCHANGE: report_exchange
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- /wait-for-it.sh rabbitmq:5672 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  report-service:
+    image: do-h-09-report-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: statistics_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      RABBIT_MQ_HOST: rabbitmq
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: report_queue
+      RABBIT_MQ_EXCHANGE: report_exchange
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- /wait-for-it.sh rabbitmq:5672 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  gateway-service:
+    image: do-h-09-gateway-service:v1
+    environment:
+      SESSION_SERVICE_HOST: session-service
+      SESSION_SERVICE_PORT: 8081
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+      BOOKING_SERVICE_HOST: booking-service
+      BOOKING_SERVICE_PORT: 8086
+      REPORT_SERVICE_HOST: report-service
+      REPORT_SERVICE_PORT: 8088
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+    configs:
+      - source: nginx_conf_v2
+        target: /etc/nginx/nginx.conf
+    networks:
+      - app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+
+configs:
+  nginx_conf_v2:
+    file: ./nginx.conf
+
+networks:
+  app-net:
+    driver: overlay
+    attachable: true
+
+volumes:
+  postgres_data:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Docker Stack для микросервисной системы бронирования отелей
+
+## Построчный разбор с комментариями
+
+```yaml
+version: '3.8'
+# Версия формата compose-файла. 3.8 поддерживает все возможности Swarm: configs, secrets, deploy
+
+services:
+  # Основная секция — описание всех сервисов стека
+  
+  postgres:
+    # Сервис базы данных PostgreSQL — общая БД для всех микросервисов
+    image: do-h-09-postgres:v1
+    # Кастомный образ с предсозданными базами для каждого микросервиса (users_db, payments_db и т.д.)
+    environment:
+      POSTGRES_USER: postgres
+      # Имя суперпользователя БД
+      POSTGRES_PASSWORD: postgres
+      # Пароль (в production должен быть в secrets, а не в открытом виде)
+      POSTGRES_DB: postgres
+      # БД по умолчанию
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Именованный том для persistence данных — данные сохраняются между перезапусками
+    networks:
+      - app-net
+      # Подключение к общей overlay-сети стека
+    deploy:
+      # Секция, специфичная для Swarm (игнорируется обычным docker-compose)
+      replicas: 1
+      # Только одна реплика — stateful сервис не масштабируется горизонтально без репликации
+      placement:
+        constraints:
+          - node.role == manager
+          # Привязка к manager-узлу — там обычно есть постоянный volume и доступ к нему
+      restart_policy:
+        condition: on-failure
+        # Перезапускать только при сбое (не при штатном завершении)
+        delay: 5s
+        # Пауза между попытками перезапуска
+
+  rabbitmq:
+    # Брокер сообщений для асинхронного обмена между booking-service и report-service
+    image: rabbitmq:3.12-management-alpine
+    # Образ с веб-интерфейсом управления (плагин management) на легковесном Alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      # Дефолтные креды (в production обязательно менять)
+    networks:
+      - app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          # Тоже на manager — для предсказуемости (stateful компонент с очередями)
+      restart_policy:
+        condition: on-failure
+
+  session-service:
+    # Микросервис управления сессиями и авторизацией
+    image: do-h-09-session-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      # Имя сервиса БД — Swarm DNS автоматически резолвит в VIP
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: users_db
+      # У каждого микросервиса своя БД в одном инстансе PostgreSQL (логическое разделение)
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- java -jar app.jar"]
+    # wait-for-it.sh — скрипт, который ждёт доступности БД перед запуском приложения
+    # Решает проблему гонки: приложение запустилось раньше БД и упало
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      # 2 реплики для отказоустойчивости и балансировки нагрузки
+      placement:
+        constraints:
+          - node.role == worker
+          # Stateless микросервисы — только на worker-узлах (отделяем нагрузку от management)
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        # 30 секунд — даём БД время подняться при общем рестарте стека
+        max_attempts: 5
+        # Максимум 5 попыток — потом сдаёмся, чтобы не зацикливаться
+
+  payment-service:
+    # Сервис обработки платежей — аналогичная структура
+    image: do-h-09-payment-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: payments_db
+      # Отдельная БД для платежей
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  loyalty-service:
+    # Сервис программы лояльности (бонусные баллы)
+    image: do-h-09-loyalty-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: balances_db
+      # БД с балансами пользователей
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  booking-service:
+    # Центральный сервис бронирования — оркестрирует hotel, payment и loyalty сервисы
+    image: do-h-09-booking-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: reservations_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      # Координаты hotel-service для синхронных HTTP-вызовов
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+      RABBIT_MQ_HOST: rabbitmq
+      RABBIT_MQ_PORT: 5672
+      # 5672 — стандартный AMQP-порт RabbitMQ
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: report_queue
+      # Очередь для отправки событий о новых бронированиях в report-service
+      RABBIT_MQ_EXCHANGE: report_exchange
+      # Exchange (точка маршрутизации) RabbitMQ
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- /wait-for-it.sh rabbitmq:5672 -- java -jar app.jar"]
+    # Ждём оба зависимых сервиса — БД и RabbitMQ
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  report-service:
+    # Сервис генерации отчётов — потребитель сообщений из RabbitMQ
+    image: do-h-09-report-service:v1
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: statistics_db
+      # Своя БД для статистики и отчётов
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      RABBIT_MQ_HOST: rabbitmq
+      RABBIT_MQ_PORT: 5672
+      RABBIT_MQ_USER: guest
+      RABBIT_MQ_PASSWORD: guest
+      RABBIT_MQ_QUEUE_NAME: report_queue
+      RABBIT_MQ_EXCHANGE: report_exchange
+    entrypoint: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- /wait-for-it.sh rabbitmq:5672 -- java -jar app.jar"]
+    networks:
+      - app-net
+    deploy:
+      replicas: 1
+      # Только 1 реплика — чтобы избежать дублирования обработки сообщений из очереди
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  gateway-service:
+    # API Gateway — единая точка входа, проксирует запросы к нужным микросервисам
+    image: do-h-09-gateway-service:v1
+    environment:
+      # Адреса всех бэкенд-сервисов для маршрутизации
+      SESSION_SERVICE_HOST: session-service
+      SESSION_SERVICE_PORT: 8081
+      HOTEL_SERVICE_HOST: hotel-service
+      HOTEL_SERVICE_PORT: 8082
+      PAYMENT_SERVICE_HOST: payment-service
+      PAYMENT_SERVICE_PORT: 8084
+      LOYALTY_SERVICE_HOST: loyalty-service
+      LOYALTY_SERVICE_PORT: 8085
+      BOOKING_SERVICE_HOST: booking-service
+      BOOKING_SERVICE_PORT: 8086
+      REPORT_SERVICE_HOST: report-service
+      REPORT_SERVICE_PORT: 8088
+    networks:
+      - app-net
+    deploy:
+      replicas: 2
+      # 2 реплики gateway — критичная точка, нужна отказоустойчивость
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+
+  nginx:
+    # Внешний reverse-proxy и балансировщик для входящего трафика
+    image: nginx:1.25-alpine
+    # Лёгкий Alpine-образ Nginx
+    ports:
+      - "80:80"
+      # Публикация порта 80 наружу через Swarm Routing Mesh — доступен на любом узле
+    configs:
+      - source: nginx_conf_v2
+        target: /etc/nginx/nginx.conf
+        # Подкладываем конфиг через механизм Swarm configs (а не volume)
+    networks:
+      - app-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+          # На manager — там единая точка входа в кластер
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+
+configs:
+  # Декларация Swarm configs — версионируемые конфиг-файлы, распространяемые по узлам
+  nginx_conf_v2:
+    file: ./nginx.conf
+    # Источник: локальный файл nginx.conf, который Swarm загрузит и распространит
+
+networks:
+  app-net:
+    driver: overlay
+    # Overlay-сеть — работает поверх физической сети, объединяя все узлы Swarm
+    # Контейнеры на разных узлах могут общаться по именам сервисов
+    attachable: true
+    # Разрешает подключение к этой сети контейнеров, запущенных вне стека (через docker run)
+
+volumes:
+  postgres_data:
+    # Декларация именованного volume для PostgreSQL — Docker управляет им сам
+```
+
+---
+
+## Краткий монолог для защиты
+
+Этот файл — описание полного микросервисного стека для Docker Swarm, реализующего систему бронирования отелей. Стек состоит из инфраструктурных сервисов (PostgreSQL, RabbitMQ, Nginx) и шести Java-микросервисов (session, hotel, payment, loyalty, booking, report, gateway). Архитектурное решение строится на чётком разделении ответственности узлов через `placement constraints`: stateful компоненты (БД, очередь, входной nginx) живут на manager-узле для предсказуемости, а stateless микросервисы запускаются на worker-узлах с 2 репликами каждый для отказоустойчивости и балансировки нагрузки. Все сервисы общаются через overlay-сеть `app-net`, которая позволяет контейнерам на разных физических узлах находить друг друга по DNS-именам сервисов. Для решения проблемы порядка запуска используется скрипт `wait-for-it.sh`, который дожидается доступности зависимых сервисов перед стартом приложения. Связь между booking-service и report-service асинхронная через RabbitMQ — это позволяет генерировать отчёты не блокируя основной поток бронирования. Конфиг nginx распространяется через нативный механизм Swarm `configs`, что позволяет версионировать конфигурацию и обновлять её без пересборки образа. Все сервисы имеют политику перезапуска с задержкой 30 секунд и ограничением в 5 попыток, что защищает от каскадных сбоев.
+
+---
+
+## Возможные вопросы на защите и ответы
+
+**1. Чем `docker stack deploy` отличается от `docker-compose up`?**
+`docker-compose` запускает контейнеры на одном хосте. `docker stack deploy` разворачивает сервисы по всему Swarm-кластеру, использует секции `deploy`, поддерживает replicas, placement, rolling updates.
+
+**2. Зачем нужны placement constraints?**
+Чтобы контролировать, где запускаются сервисы. Stateful сервисы привязываются к конкретным узлам, чтобы их volume'ы всегда были доступны. Stateless — распределяются по worker-узлам.
+
+**3. Что такое overlay сеть?**
+Виртуальная сеть поверх физической, объединяющая узлы Swarm. Использует VXLAN-инкапсуляцию. Позволяет контейнерам на разных хостах общаться по сервисным DNS-именам, как будто они на одной машине.
+
+**4. Что такое Routing Mesh?**
+Механизм Swarm: порт, опубликованный сервисом, доступен на всех узлах кластера, независимо от того, где реально запущена реплика. Swarm перенаправит трафик нужному контейнеру.
+
+**5. Зачем wait-for-it.sh?**
+Контейнеры в Swarm запускаются параллельно, и нет гарантии порядка. wait-for-it.sh проверяет TCP-доступность зависимости (БД, очередь) перед стартом приложения, предотвращая падение из-за отсутствия зависимости.
+
+**6. Почему не использовать `depends_on`?**
+В Swarm-режиме `depends_on` игнорируется! Он работает только в docker-compose. Поэтому нужно решать проблему порядка через wait-for-it или retry-логику в приложении.
+
+**7. Почему postgres на manager-узле?**
+Потому что используется локальный volume `postgres_data`. Если БД переедет на другой узел, volume будет пустой, и данные потеряются. Привязка к одному узлу гарантирует persistence.
+
+**8. Почему report-service в 1 реплике?**
+Это consumer очереди RabbitMQ. Если запустить несколько реплик, сообщения будут распределяться round-robin, но для отчётности это может вызвать проблемы с дубликатами или порядком обработки. Безопаснее держать одну реплику.
+
+**9. Что такое Swarm configs?**
+Нативный механизм Swarm для распространения конфигурационных файлов. Файл сохраняется в Raft-хранилище менеджеров и монтируется в контейнеры. Можно версионировать (отсюда `nginx_conf_v2`).
+
+**10. Почему версия в имени конфига (v2)?**
+Swarm configs неизменяемы — обновить существующий конфиг нельзя, только создать новый. Версионирование в имени — общепринятая практика для управления обновлениями.
+
+**11. Чем configs отличаются от volumes?**
+Volumes — для изменяемых данных приложения (БД, кэши). Configs — для read-only конфигурационных файлов, которые управляются Swarm централизованно.
+
+**12. Что такое attachable: true?**
+По умолчанию к overlay-сети могут подключаться только сервисы стека. `attachable: true` разрешает подключение и обычных контейнеров через `docker run --network app-net`, что полезно для отладки.
+
+**13. Как сервисы находят друг друга?**
+Через встроенный Swarm DNS. Когда сервис обращается к `postgres`, Docker DNS возвращает VIP сервиса, и трафик балансируется между его репликами через IPVS.
+
+**14. Что такое VIP в Swarm?**
+Virtual IP — виртуальный адрес сервиса. Все обращения к имени сервиса резолвятся в VIP, а Swarm сам балансирует трафик между репликами.
+
+**15. Почему пароли в открытом виде в environment?**
+Это плохая практика. В production нужно использовать Docker secrets — зашифрованное хранилище для чувствительных данных, монтируемое как файлы в `/run/secrets/`.
+
+**16. Что такое restart_policy?**
+Политика автоматического перезапуска контейнера: condition (когда перезапускать), delay (пауза между попытками), max_attempts (лимит), window (окно для подсчёта попыток).
+
+**17. Что произойдёт при падении manager-узла?**
+Сервисы, привязанные к manager, упадут и не смогут переехать (нет другого manager-узла с таким же volume). Для отказоустойчивости нужно несколько managers и распределённое хранилище.
+
+**18. Зачем 2 реплики gateway-service?**
+Gateway — точка входа всех запросов. Если упадёт единственная реплика, вся система недоступна. 2 реплики дают отказоустойчивость и балансировку нагрузки.
+
+**19. Как работает связь booking → report через RabbitMQ?**
+Booking-service публикует сообщение в exchange `report_exchange`, которое маршрутизируется в очередь `report_queue`. Report-service подписан на эту очередь и асинхронно обрабатывает сообщения, генерируя отчёты.
+
+**20. Что произойдёт при `docker stack deploy` повторно?**
+Swarm сравнит текущее состояние с описанным и применит только разницу: обновит изменённые сервисы (rolling update), оставит без изменений неизменённые. Идемпотентность.
+
+**21. Почему все микросервисы используют один PostgreSQL?**
+Это компромисс для учебной среды — экономия ресурсов. В production для каждого микросервиса должна быть своя отдельная БД (database-per-service паттерн).
+
+**22. Можно ли масштабировать БД таким же образом?**
+Нет, простое увеличение replicas для PostgreSQL не работает — несколько инстансов конфликтуют за один volume. Для масштабирования нужны master-slave репликация, кластеризация (Patroni, Citus и т.д.).
